@@ -30,31 +30,44 @@ train.py         학습 루프  -> checkpoints/best.pt, last.pt
 predict.py       추론 (CLI + 함수 API)
 export_onnx.py   체크포인트 -> captcha.onnx
 onnx_infer.py    onnxruntime 추론 (torch 불필요)
-grab_web.py      Playwright로 웹페이지 캡차 캡처 후 인식 (예시)
+grab_web.py      웹페이지 캡차 캡처 후 인식만 (예시)
+auto_fill.py     접속->캡처->인식->입력->클릭 전체 자동화 (--cdp/--browser 등)
 ```
 
-## 설치
+## 다른 PC에서 세팅
 
-```bash
-pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
-pip install pillow numpy onnx onnxruntime
+저장소에 학습된 `checkpoints/best.pt` 와 `captcha.onnx` 가 포함돼 있어 **재학습 없이 바로 추론·자동화** 가능하다.
+
+### 1) 공통
+
+```powershell
+git clone https://github.com/HSHeee/web-image-ML.git
+cd web-image-ML
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -U pip
+pip install --index-url https://download.pytorch.org/whl/cpu torch
+pip install -r requirements.txt
 ```
 
-## 다른 PC에서 실행
+- Python 3.10~3.12 권장.
+- 인식 스모크 테스트: `python predict.py 아무_캡차.png`
 
-```bash
-git clone <저장소 URL>
-cd captcha_ocr
-python -m venv .venv && .venv\Scripts\activate        # (선택) 가상환경
-pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
-pip install pillow numpy onnx onnxruntime
-python predict.py <캡차이미지.png>                     # 학습된 checkpoints/best.pt 로 바로 추론
-```
+### 2) 웹 자동화까지 쓸 때
 
-- 저장소에는 학습된 `checkpoints/best.pt` 와 `captcha.onnx` 가 포함되어 바로 추론 가능.
-- 폰트는 각 PC의 `C:\Windows\Fonts` 를 사용 (Windows 기준). 다른 OS면 `synth.py` 의
-  `discover_fonts()` 경로를 수정하거나 `--fonts-dir` 로 폰트 폴더 지정.
-- 웹 자동화까지 쓰려면 그 PC에서도 `pip install playwright && playwright install chromium`.
+`playwright` 는 위 `requirements.txt` 로 이미 깔린다. **브라우저 실행 방식**만 고르면 된다.
+
+| 방식 | 추가 설치 | 쓰는 인자 |
+|---|---|---|
+| 이미 로그인해 띄워둔 Chrome/Whale 에 붙기 (권장) | 없음 | `--cdp http://localhost:9222` |
+| 설치된 Chrome / Edge 로 새로 띄우기 | 없음 | `--browser chrome` / `--browser msedge` |
+| 네이버 웨일로 새로 띄우기 | 없음 | `--browser-path "C:\Program Files\Naver\Naver Whale\Application\whale.exe"` |
+| Playwright 번들 Chromium | `playwright install chromium` | (기본값) |
+
+### 3) 학습까지 다시 할 때
+
+추가 설치 없음 (`torch` 로 충분). 폰트는 그 PC의 `C:\Windows\Fonts` 를 자동으로 쓴다.
+다른 OS면 `--fonts-dir` 로 폰트 폴더를 지정.
 
 ## 1. 합성 데이터 확인
 
@@ -113,36 +126,44 @@ text, conf, per_char = predict_image(model, Image.open("captcha.png"))
 print(text, conf)
 ```
 
-## 4. 웹페이지에서 바로 (서버 없이 단일 스크립트)
+## 4. 웹페이지 자동 입력 (`auto_fill.py`, 서버 없이 단일 스크립트)
 
-```bash
-pip install playwright && playwright install chromium
+흐름: 접속 → (선행 클릭) → 캡차 요소 캡처 → 인식 → input 입력 → 버튼 클릭.
+**본인 소유 / 자동화가 허용된 환경에서만 사용.**
+
+전체 옵션은 `python auto_fill.py --help`. 핵심만:
+
+| 인자 | 설명 |
+|---|---|
+| `--url` | 처음 여는 주소 |
+| `--captcha "SELECTOR"` | 캡차 이미지 요소 CSS 선택자 (`--clip x,y,w,h` 로 좌표 캡처도 가능) |
+| `--from-src` | 스크린샷 대신 `<img src>`(base64/data URI 등)를 직접 디코딩 |
+| `--input "SELECTOR"` | 정답 입력란 |
+| `--submit "SELECTOR"` | 제출 버튼 (생략 시 입력까지만) |
+| `--pre-click "SEL"` | 캡차 전에 눌러야 할 것 (반복 지정, 준 순서대로) |
+| `--date "2026년 10월 3일"` | 시작 전 날짜 클릭 (`abbr[aria-label=...]`). 생략=건너뜀 (on/off) |
+| `--refresh "SEL" --min-conf 0.9 --max-attempts 5` | confidence 낮으면 새 캡차 받아 재시도 |
+| `--confirm-submit` | 제출 직전 콘솔 Enter 확인 (권장) |
+| `--cdp http://localhost:9222` | 이미 뜬 브라우저에 붙기 (로그인 유지) |
+| `--browser chrome\|msedge` / `--browser-path "...whale.exe"` | 새로 띄울 브라우저 |
+| `--headed` / `--hold` / `--save-shots` / `--timeout 120000` | 창 표시 / 종료 전 대기 / 캡처 저장 / 대기시간 |
+
+예시 (PowerShell 한 줄, 선택자는 대상 사이트에 맞게 교체):
+
+```powershell
+python auto_fill.py --url "http://내부포털/start" --pre-click "text=시작하기" --captcha "img[alt='캡챠 이미지']" --from-src --input "input[placeholder*='문자를 입력']" --submit "text=입력완료" --confirm-submit --browser chrome --headed --save-shots --timeout 120000
 ```
 
-**인식만** (캡처 → 텍스트 출력):
+이미 로그인해 띄워둔 브라우저에 붙이려면 그 브라우저를 먼저 이렇게 실행:
 
-```bash
-python grab_web.py https://사이트/로그인 "img#captcha"
+```powershell
+& "C:\Program Files\Naver\Naver Whale\Application\whale.exe" --remote-debugging-port=9222
 ```
 
-**전체 자동화** (접속 → 요소 스크린샷 → 인식 → input 입력 → 버튼 클릭):
+그리고 위 명령에서 `--browser chrome --headed` 를 `--cdp http://localhost:9222` 로 바꾼다.
 
-```bash
-python auto_fill.py ^
-  --url https://사이트/로그인 ^
-  --captcha "img#captcha" ^
-  --input  "input[name=captcha]" ^
-  --submit "button[type=submit]" ^
-  --headed --confirm-submit
-```
-
-- `--captcha` 대신 `--clip x,y,w,h` 로 좌표 영역 캡처 가능
-- `--refresh "a#reload" --min-conf 0.9 --max-attempts 5` : confidence 낮으면 새 캡차 받아 재시도
-- `--confirm-submit` : 제출 직전 콘솔에서 Enter 확인 (권장)
-- `--submit` 생략 시 입력까지만
-- 본인 소유 / 자동화가 허용된 환경에서만 사용
-
-이미 캡처한 PNG 바이트가 있으면 코드로:
+**인식만** 필요하면: `python grab_web.py https://사이트 "img#captcha"`
+또는 코드로:
 
 ```python
 from predict import load_model, predict_bytes

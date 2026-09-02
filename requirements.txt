@@ -1,13 +1,17 @@
-# 학습/추론 (PyTorch CPU 휠은 아래 인덱스에서 설치)
-#   pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
+# --- 추론에 필요 (필수) ---
+# PyTorch CPU 휠은 전용 인덱스에서 설치:
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch
 torch
-torchvision
 pillow>=10
 numpy
 
-# ONNX 내보내기 / 경량 배포 추론 (선택)
+# --- 웹 자동화 (auto_fill.py / grab_web.py) ---
+# --cdp(이미 뜬 브라우저에 붙기), --browser chrome/whale 만 쓸 거면 아래 한 줄이면 됨.
+# 번들 Chromium 을 쓰려면 추가로:  playwright install chromium
+playwright
+
+# --- ONNX 내보내기 / 배포 추론 (선택) ---
 onnx
 onnxruntime
 
-# 웹페이지에서 캡차 이미지 캡처 (선택)
-# playwright   # 설치 후:  playwright install chromium
+# 학습까지 할 때만 추가로 필요한 건 없음 (torch 로 충분)
