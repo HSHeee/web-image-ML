@@ -17,3 +17,8 @@ checkpoints/last.pt
 # checkpoints/
 # *.onnx
 # samples.png
+
+# 로컬 자동화용 브라우저 프로필
+.chrome-profile/
+.whale-profile/
+check.png

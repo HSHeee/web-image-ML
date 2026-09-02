@@ -64,8 +64,18 @@ def _open_browser(p, args):
         kw["executable_path"] = _find_whale()
 
     if args.cdp:                                    # 이미 떠 있는 브라우저에 붙기
-        browser = p.chromium.connect_over_cdp(args.cdp)
+        endpoint = args.cdp.replace("://localhost", "://127.0.0.1")  # IPv6 회피
+        print(f"  connect_over_cdp({endpoint}) ...", flush=True)
+        try:
+            browser = p.chromium.connect_over_cdp(endpoint, timeout=20000)
+        except Exception as e:
+            raise SystemExit(
+                f"CDP 연결 실패: {e}\n"
+                "  네이버 웨일은 connect_over_cdp 호환이 잘 안 됩니다.\n"
+                "  --cdp 대신 아래처럼 Chrome을 전용 프로필로 띄우세요:\n"
+                '  --browser chrome --user-data-dir "%CD%\\.chrome-profile" --headed')
         ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+        print(f"  연결됨. 컨텍스트 {len(browser.contexts)}개, 새 탭 생성", flush=True)
         return ctx.new_page(), browser.close
 
     if args.user_data_dir:                          # 로그인 유지되는 영구 프로필
@@ -99,21 +109,37 @@ def _grab(page, args):
 
 
 def run(args):
+    import sys
     from playwright.sync_api import sync_playwright
 
-    model = None if args.check else load_model(args.ckpt)
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+
+    if not args.check:
+        print("모델 로딩...", flush=True)
+        model = load_model(args.ckpt)
+        print("모델 로드 완료", flush=True)
+    else:
+        model = None
 
     with sync_playwright() as p:
+        print("브라우저 여는 중...", flush=True)
         page, close_browser = _open_browser(p, args)
+        print(f"이동: {args.url}", flush=True)
         page.goto(args.url, wait_until="domcontentloaded", timeout=args.timeout)
+        print(f"현재 URL: {page.url}", flush=True)
 
         steps = list(args.pre_click)        # 캡차가 뜨기 전 눌러야 할 것들 (순서대로)
         if args.date:                       # 날짜 선택 on/off: 값 있으면 맨 앞에 끼움
             steps.insert(0, f"abbr[aria-label='{args.date}']")
         for sel in steps:
-            print(f"pre-click: {sel}")
+            print(f"pre-click: {sel}", flush=True)
             page.click(sel, timeout=args.timeout)
             page.wait_for_timeout(400)
+        if steps:
+            print(f"pre-click 후 URL: {page.url}", flush=True)
         if args.wait_ms:
             page.wait_for_timeout(args.wait_ms)
 
@@ -135,6 +161,7 @@ def run(args):
 
         solved = False
         for attempt in range(1, args.max_attempts + 1):
+            print(f"캡차 요소 대기: {args.clip or args.captcha}", flush=True)
             img = _grab(page, args)
             text, conf, per_char = predict_image(model, img)
             print(f"[{attempt}/{args.max_attempts}] pred={text}  conf={conf:.3f}  "
