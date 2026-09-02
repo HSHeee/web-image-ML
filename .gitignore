@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+
+# 실행 중 생성물
+shot_*.png
+testimgs/
+
+# best.pt 만 커밋 (추론/내보내기에 쓰는 건 이것). last.pt 는 재학습 시 재생성됨
+checkpoints/last.pt
+
+# 재학습 시 새로 만들어짐 (저장소에서 빼려면 주석 해제)
+# checkpoints/
+# *.onnx
+# samples.png

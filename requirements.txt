@@ -1,0 +1,13 @@
+# 학습/추론 (PyTorch CPU 휠은 아래 인덱스에서 설치)
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
+torch
+torchvision
+pillow>=10
+numpy
+
+# ONNX 내보내기 / 경량 배포 추론 (선택)
+onnx
+onnxruntime
+
+# 웹페이지에서 캡차 이미지 캡처 (선택)
+# playwright   # 설치 후:  playwright install chromium
