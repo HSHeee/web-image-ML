@@ -7,22 +7,21 @@
     pip install playwright
     playwright install chromium
 
-기본 사용:
-    python auto_fill.py ^
-      --url https://example.com/login ^
-      --captcha "img#captcha" ^
-      --input  "input[name=captcha]" ^
-      --submit "button[type=submit]" ^
-      --headed --confirm-submit
+기본 사용 (PowerShell, 한 줄):
+    python auto_fill.py --url https://example.com/login --captcha "img[alt='캡챠 이미지']" --from-src --input "input[placeholder*='문자를 입력']" --submit "text=입력완료" --headed --confirm-submit
 
-캡차가 깔끔한 요소가 아니면 좌표로 잘라서 캡처:
-    --clip 320,180,150,50        # x,y,width,height  (--captcha 대신)
-
-낮은 confidence 면 자동으로 새 캡차 요청하고 재시도:
-    --refresh "a#reloadCaptcha" --min-conf 0.9 --max-attempts 5
+옵션:
+    --from-src                  <img src>(data URI 등)를 직접 디코딩 (스크린샷 대신, 더 깨끗)
+    --clip 320,180,150,50       요소 대신 좌표로 캡처: x,y,width,height (--captcha 대신)
+    --pre-click "text=시작하기"   캡차가 뜨기 전 눌러야 할 요소 (여러 번 지정 가능, 순서대로)
+    --date "2026년 10월 3일"      시작 전 날짜 선택 클릭. 생략하면 건너뜀 (on/off)
+    --refresh "button[aria-label='새 문자 불러오기']" --min-conf 0.9 --max-attempts 5
+    --submit 생략               입력까지만 하고 멈춤 (처음 테스트할 때 권장)
+    --save-shots                캡처한 캡차를 shot_XX_예측.png 로 저장
 """
 
 import argparse
+import base64
 import io
 
 from PIL import Image
@@ -30,15 +29,24 @@ from PIL import Image
 from predict import load_model, predict_image
 
 
-def _shot(page, args):
+def _grab(page, args):
     """캡차 이미지를 PIL 로 반환."""
     if args.clip:
         x, y, w, h = (float(v) for v in args.clip.split(","))
         png = page.screenshot(clip={"x": x, "y": y, "width": w, "height": h})
-    else:
-        el = page.wait_for_selector(args.captcha, timeout=args.timeout, state="visible")
-        png = el.screenshot()
-    return Image.open(io.BytesIO(png))
+        return Image.open(io.BytesIO(png))
+
+    el = page.wait_for_selector(args.captcha, timeout=args.timeout, state="visible")
+
+    if args.from_src:                       # <img src> 를 직접 디코딩 (렌더링/스케일 없음)
+        src = el.get_attribute("src") or ""
+        if src.startswith("data:"):
+            data = base64.b64decode(src.split(",", 1)[1])
+        else:
+            data = page.request.get(src).body()
+        return Image.open(io.BytesIO(data))
+
+    return Image.open(io.BytesIO(el.screenshot()))
 
 
 def run(args):
@@ -50,12 +58,20 @@ def run(args):
         browser = p.chromium.launch(headless=not args.headed)
         page = browser.new_context().new_page()
         page.goto(args.url, wait_until="domcontentloaded", timeout=args.timeout)
+
+        steps = list(args.pre_click)        # 캡차가 뜨기 전 눌러야 할 것들 (순서대로)
+        if args.date:                       # 날짜 선택 on/off: 값 있으면 맨 앞에 끼움
+            steps.insert(0, f"abbr[aria-label='{args.date}']")
+        for sel in steps:
+            print(f"pre-click: {sel}")
+            page.click(sel, timeout=args.timeout)
+            page.wait_for_timeout(400)
         if args.wait_ms:
             page.wait_for_timeout(args.wait_ms)
 
         solved = False
         for attempt in range(1, args.max_attempts + 1):
-            img = _shot(page, args)
+            img = _grab(page, args)
             text, conf, per_char = predict_image(model, img)
             print(f"[{attempt}/{args.max_attempts}] pred={text}  conf={conf:.3f}  "
                   f"per_char={[round(c, 2) for c in per_char]}")
@@ -112,9 +128,16 @@ def main():
     ap.add_argument("--url", required=True)
     ap.add_argument("--captcha", help="캡차 이미지 요소 CSS 선택자")
     ap.add_argument("--clip", help="요소 대신 좌표로 캡처: x,y,width,height")
+    ap.add_argument("--from-src", action="store_true",
+                    help="스크린샷 대신 <img src>(data URI 등)를 직접 디코딩")
     ap.add_argument("--input", required=True, help="정답 입력란 CSS 선택자")
     ap.add_argument("--submit", default="", help="제출 버튼 선택자 (생략 시 입력만)")
     ap.add_argument("--refresh", default="", help="새 캡차 버튼 선택자 (재시도용)")
+    ap.add_argument("--pre-click", action="append", default=[], metavar="SELECTOR",
+                    help="캡차가 뜨기 전 눌러야 할 요소 (반복 지정 가능, 준 순서대로)")
+    ap.add_argument("--date", default="", metavar="ARIA_LABEL",
+                    help="시작 전 날짜 선택 클릭. 예: \"2026년 10월 3일\". "
+                         "생략하면 이 단계를 건너뜀 (on/off)")
     ap.add_argument("--ckpt", default="checkpoints/best.pt")
 
     ap.add_argument("--min-conf", type=float, default=0.90,
