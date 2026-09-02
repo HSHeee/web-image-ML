@@ -101,7 +101,7 @@ def _grab(page, args):
 def run(args):
     from playwright.sync_api import sync_playwright
 
-    model = load_model(args.ckpt)
+    model = None if args.check else load_model(args.ckpt)
 
     with sync_playwright() as p:
         page, close_browser = _open_browser(p, args)
@@ -116,6 +116,22 @@ def run(args):
             page.wait_for_timeout(400)
         if args.wait_ms:
             page.wait_for_timeout(args.wait_ms)
+
+        if args.check:                      # 연결/로그인 확인만 (캡차 처리 안 함)
+            page.wait_for_timeout(args.wait_ms or 1500)
+            print("title:", page.title())
+            print("url  :", page.url)
+            if args.expect:
+                found = page.locator(args.expect).count() > 0
+                print(f"expect {args.expect!r}: {'찾음 (O)' if found else '못 찾음 (X)'}")
+            if args.save_shots:
+                Image.open(io.BytesIO(page.screenshot(full_page=True))).save("check.png")
+                print("check.png 저장")
+            if args.hold:
+                input("Enter 로 종료: ")
+            if not args.cdp:
+                close_browser()
+            return 0
 
         solved = False
         for attempt in range(1, args.max_attempts + 1):
@@ -179,7 +195,7 @@ def main():
     ap.add_argument("--clip", help="요소 대신 좌표로 캡처: x,y,width,height")
     ap.add_argument("--from-src", action="store_true",
                     help="스크린샷 대신 <img src>(data URI 등)를 직접 디코딩")
-    ap.add_argument("--input", required=True, help="정답 입력란 CSS 선택자")
+    ap.add_argument("--input", default="", help="정답 입력란 CSS 선택자")
     ap.add_argument("--submit", default="", help="제출 버튼 선택자 (생략 시 입력만)")
     ap.add_argument("--refresh", default="", help="새 캡차 버튼 선택자 (재시도용)")
     ap.add_argument("--pre-click", action="append", default=[], metavar="SELECTOR",
@@ -200,6 +216,11 @@ def main():
     ap.add_argument("--cdp", default="",
                     help="이미 떠 있는 브라우저에 붙기. 예: http://localhost:9222 "
                          "(브라우저를 --remote-debugging-port=9222 로 직접 실행해 둘 것)")
+
+    ap.add_argument("--check", action="store_true",
+                    help="연결/로그인 확인만. 캡차 처리 없이 페이지 열어 제목·스크린샷 출력")
+    ap.add_argument("--expect", default="",
+                    help="--check 모드에서 이 선택자가 있으면 O (예: 로그인 여부 확인)")
 
     ap.add_argument("--min-conf", type=float, default=0.90,
                     help="이 미만이면 재시도/중단")
@@ -222,8 +243,11 @@ def main():
     ap.add_argument("--after-submit-ms", type=int, default=1200)
     args = ap.parse_args()
 
-    if not args.captcha and not args.clip:
-        ap.error("--captcha 또는 --clip 중 하나는 필요합니다")
+    if not args.check:
+        if not args.input:
+            ap.error("--input 이 필요합니다 (또는 --check 로 연결만 확인)")
+        if not args.captcha and not args.clip:
+            ap.error("--captcha 또는 --clip 중 하나는 필요합니다")
     raise SystemExit(run(args))
 
 
