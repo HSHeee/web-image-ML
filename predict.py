@@ -64,7 +64,7 @@ def main():
         if args.show_conf:
             print(f"{path}\t{text}\t{mconf:.3f}\t{[round(c, 2) for c in cc]}")
         else:
-            print(f"{path}\t{text}")
+            print(text)
 
 
 if __name__ == "__main__":
