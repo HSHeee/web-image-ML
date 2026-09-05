@@ -14,6 +14,7 @@ CLI
 import argparse
 import io
 import sys
+from pathlib import Path
 
 import torch
 from PIL import Image
@@ -22,8 +23,11 @@ import config
 from model import LightCaptchaNet
 from preprocess import to_tensor
 
+# 실행 위치(CWD)와 무관하게 스크립트 폴더 기준으로 기본 체크포인트를 찾는다
+DEFAULT_CKPT = str(Path(__file__).resolve().parent / "checkpoints" / "best.pt")
 
-def load_model(ckpt_path="checkpoints/best.pt", device="cpu"):
+
+def load_model(ckpt_path=DEFAULT_CKPT, device="cpu"):
     model = LightCaptchaNet()
     ck = torch.load(ckpt_path, map_location=device)
     state = ck["model"] if isinstance(ck, dict) and "model" in ck else ck
@@ -47,7 +51,7 @@ def predict_bytes(model, data: bytes, device="cpu"):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("images", nargs="*", help="이미지 파일들 (생략 시 stdin 1장)")
-    ap.add_argument("--ckpt", default="checkpoints/best.pt")
+    ap.add_argument("--ckpt", default=DEFAULT_CKPT)
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--show-conf", action="store_true")
     args = ap.parse_args()
