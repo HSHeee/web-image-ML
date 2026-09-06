@@ -9,16 +9,19 @@
 """
 
 import argparse
+import glob
 import os
 import time
 
 import torch
 import torch.nn as nn
+from PIL import Image
 from torch.utils.data import DataLoader
 
 import config
 from dataset import SynthCaptcha, build_val
 from model import LightCaptchaNet, param_count
+from preprocess import to_tensor
 from synth import discover_fonts
 
 
@@ -37,6 +40,33 @@ def evaluate(model, x_val, y_val, device, batch=256):
     return ok_str / n, ok_ch / (n * config.NUM_POS)
 
 
+def load_real(real_dir):
+    """파일명이 정답인 실제 캡차 폴더 -> (x, y, names). 없으면 None."""
+    files = sorted(glob.glob(os.path.join(real_dir, "*.png"))
+                   + glob.glob(os.path.join(real_dir, "*.jpg")))
+    xs, ys, names = [], [], []
+    for f in files:
+        label = os.path.splitext(os.path.basename(f))[0].strip().upper()
+        if len(label) != config.NUM_POS or any(c not in config.CHARS for c in label):
+            continue
+        xs.append(to_tensor(Image.open(f)))
+        ys.append(torch.tensor(config.encode(label), dtype=torch.long))
+        names.append(label)
+    if not xs:
+        return None
+    return torch.stack(xs), torch.stack(ys), names
+
+
+@torch.no_grad()
+def evaluate_real(model, x, y, device):
+    model.eval()
+    pred = model(x.to(device)).argmax(-1).cpu()
+    model.train()
+    ok_str = (pred == y).all(dim=1).sum().item()
+    ok_ch = (pred == y).sum().item()
+    return ok_str / len(y), ok_ch / (len(y) * config.NUM_POS)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--steps", type=int, default=4000)
@@ -49,6 +79,8 @@ def main():
     ap.add_argument("--out", default="checkpoints")
     ap.add_argument("--resume", default="")
     ap.add_argument("--fonts-dir", default="", help="추가 폰트 폴더 (선택)")
+    ap.add_argument("--real-dir", default="Screenshot",
+                    help="파일명=정답 인 실제 캡차 폴더. val 시점마다 정확도 같이 출력")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--torch-threads", type=int, default=6,
                     help="CPU 연산 스레드 수. DataLoader 워커와 코어를 나눠 쓰도록 제한 (0=자동)")
@@ -73,6 +105,14 @@ def main():
 
     print(f"building validation set ({args.val_size}) ...")
     x_val, y_val = build_val(args.val_size, seed=1234, fonts=fonts)
+
+    real = load_real(args.real_dir) if args.real_dir else None
+    if real:
+        rx, ry, _ = real
+        rx = rx.to(device)
+        print(f"real eval set: {len(ry)} images from {args.real_dir}/")
+    else:
+        print(f"real eval set: (없음 - {args.real_dir}/ 에 파일명=정답 png 두면 활성화)")
 
     model = LightCaptchaNet().to(device)
     print(f"params: {param_count(model):,}")
@@ -111,17 +151,24 @@ def main():
 
         if step % args.val_every == 0 or step >= args.steps:
             s_acc, c_acc = evaluate(model, x_val, y_val, device)
-            print(f"  [val] full-string {s_acc*100:.2f}%   per-char {c_acc*100:.2f}%")
+            line = f"  [synth] full {s_acc*100:.2f}%  char {c_acc*100:.2f}%"
+            if real:
+                r_str, r_ch = evaluate_real(model, rx, ry, device)
+                line += f"   [real] full {r_str*100:.1f}%  char {r_ch*100:.1f}%"
+                score = r_ch                       # 실제 per-char 로 best 선정
+            else:
+                score = s_acc
+            print(line)
             ck = {"model": model.state_dict(), "opt": opt.state_dict(),
                   "sched": sched.state_dict(), "step": step,
-                  "best": max(best, s_acc),
+                  "best": max(best, score),
                   "meta": {"chars": config.CHARS, "num_pos": config.NUM_POS,
                            "img_h": config.IMG_H, "img_w": config.IMG_W}}
             torch.save(ck, os.path.join(args.out, "last.pt"))
-            if s_acc >= best:
-                best = s_acc
+            if score >= best:
+                best = score
                 torch.save(ck, os.path.join(args.out, "best.pt"))
-                print(f"  -> saved best.pt ({best*100:.2f}%)")
+                print(f"  -> saved best.pt (score {best*100:.2f}%)")
 
         if step >= args.steps:
             break

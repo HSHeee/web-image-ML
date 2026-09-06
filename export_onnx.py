@@ -1,12 +1,15 @@
-"""학습된 체크포인트를 ONNX 로 내보낸다.
+"""학습된 체크포인트를 단일 파일 ONNX 로 내보낸다.
 
-  python export_onnx.py --ckpt checkpoints/best.pt --out captcha.onnx
+  python export_onnx.py --ckpt checkpoints/finetuned.pt --out captcha.onnx
 
 배포 추론은 onnx_infer.py 참고 (onnxruntime, CPU 수 ms).
 """
 
 import argparse
+import os
+import tempfile
 
+import onnx
 import torch
 
 import config
@@ -15,9 +18,9 @@ from model import LightCaptchaNet
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ckpt", default="checkpoints/best.pt")
+    ap.add_argument("--ckpt", default="checkpoints/finetuned.pt")
     ap.add_argument("--out", default="captcha.onnx")
-    ap.add_argument("--opset", type=int, default=17)
+    ap.add_argument("--opset", type=int, default=18)
     args = ap.parse_args()
 
     model = LightCaptchaNet()
@@ -26,14 +29,18 @@ def main():
     model.eval()
 
     dummy = torch.randn(1, 3, config.IMG_H, config.IMG_W)
-    torch.onnx.export(
-        model, dummy, args.out,
-        input_names=["image"], output_names=["logits"],
-        dynamic_axes={"image": {0: "batch"}, "logits": {0: "batch"}},
-        opset_version=args.opset,
-        dynamo=False,          # 레거시 exporter: 단순 정적 그래프, Windows 콘솔 인코딩 이슈 회피
-    )
-    print(f"wrote {args.out}")
+    # dynamo exporter: 새 헤드의 adaptive_avg_pool 업샘플을 지원. 가중치는 .data 로 분리됨
+    with tempfile.TemporaryDirectory() as td:
+        tmp = os.path.join(td, "m.onnx")
+        torch.onnx.export(
+            model, dummy, tmp,
+            input_names=["image"], output_names=["logits"],
+            dynamic_axes={"image": {0: "batch"}, "logits": {0: "batch"}},
+            opset_version=args.opset, dynamo=True,
+        )
+        m = onnx.load(tmp)                       # 외부 가중치까지 메모리로 로드
+    onnx.save(m, args.out, save_as_external_data=False)   # 단일 파일로 저장
+    print(f"wrote {args.out}  ({os.path.getsize(args.out)/1e6:.1f} MB)")
 
 
 if __name__ == "__main__":

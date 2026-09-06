@@ -6,9 +6,12 @@ venv/
 env/
 .ipynb_checkpoints/
 
-# 실행 중 생성물
+# 실행 중 생성물 / 분석용 임시
 shot_*.png
 testimgs/
+_zoom_*.png
+_z_*.png
+_*_montage.png
 
 # best.pt 만 커밋 (추론/내보내기에 쓰는 건 이것). last.pt 는 재학습 시 재생성됨
 checkpoints/last.pt

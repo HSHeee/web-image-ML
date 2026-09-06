@@ -4,34 +4,36 @@
 
 - **입력**: 캡차 이미지 (파일 / 바이트 / PIL)
 - **출력**: 6글자 문자열 (`A`–`Z`) + 글자별 confidence
-- **모델**: 분할 없는 경량 CNN, 위치별 26-클래스 분류 6개. **586,234 파라미터**
-- **데이터**: 합성 생성 (디스크 불필요, 즉석 무한 생성)
-- **배포**: ONNX(fp32) → onnxruntime CPU **약 2 ms/이미지**, 모델 파일 2.3 MB
+- **모델**: 분할 없는 경량 CNN + 1D-conv-mix 헤드(글자 위치 변동에 강함). **약 636K 파라미터**
+- **데이터**: 합성 생성(즉석 무한) + 실제 캡차 소량 파인튜닝
+- **배포**: ONNX(fp32) → onnxruntime CPU **약 2 ms/이미지**, 모델 파일 2.6 MB
 
-### 검증된 결과 (합성 검증셋 1000장)
+### 결과
 
-| 스텝 | full-string acc | per-char acc |
-|-----:|----------------:|-------------:|
-|  800 | 92.0 %          | 98.5 %       |
-| 2000 | 95.8 %          | 99.3 %       |
-| 4000 | 98.4 %          | 99.7 %       |
-| 6000 | **99.0 %**      | **99.8 %**   |
+| 모델 | 합성 검증셋 | 실제 캡차 (홀드아웃 26장) |
+|---|---|---|
+| 합성만 `best.pt` | per-char 98.8% | full-string ~70%, per-char ~93% |
+| + 실제 76장 파인튜닝 `finetuned.pt` | — | **full-string 96~100%, per-char 99~100%** |
 
-> 합성셋 정확도이고, **실제 캡차 정확도는 생성기가 실물과 얼마나 닮았는지에 달려 있다.**
-> 실제 샘플 수십~수백 장으로 별도 검증/파인튜닝하는 것을 권장.
+> 홀드아웃 = 파인튜닝에 안 쓴 26장. 표본이 작아 ±수 %p 출렁임.
+> 이 수치는 **학습에 쓴 캡차와 같은 시스템 기준**이다. 사이트가 캡차 디자인을 바꾸면
+> 재파인튜닝이 필요하다 (합성 pipeline + `best.pt` 가 폴백).
 
 ```
 config.py        문자셋 / 이미지 크기 / 인코딩
 synth.py         합성 캡차 생성기  (python synth.py -> samples.png 미리보기)
 preprocess.py    이미지 -> 텐서 (학습/추론 공용)
-model.py         LightCaptchaNet
-dataset.py       즉석 생성 Dataset + 고정 검증셋
-train.py         학습 루프  -> checkpoints/best.pt, last.pt
-predict.py       추론 (CLI + 함수 API)
-export_onnx.py   체크포인트 -> captcha.onnx
+model.py         LightCaptchaNet (CNN + 1D-conv-mix 헤드)
+dataset.py       즉석 생성 Dataset + 텐서 augmentation + 고정 검증셋
+train.py         합성 학습 루프  -> checkpoints/best.pt, last.pt
+finetune.py      실제 캡차 소량 파인튜닝 -> checkpoints/finetuned.pt
+eval_real.py     실제 캡차 폴더로 정확도 측정 (파일명=정답)
+predict.py       추론 (CLI + 함수 API). finetuned.pt 있으면 그걸 우선 사용
+export_onnx.py   체크포인트 -> captcha.onnx (단일 파일)
 onnx_infer.py    onnxruntime 추론 (torch 불필요)
 grab_web.py      웹페이지 캡차 캡처 후 인식만 (예시)
 auto_fill.py     접속->캡처->인식->입력->클릭 전체 자동화 (--cdp/--browser 등)
+Screenshot/      실제 캡차 (파일명 = 정답). finetune.py / eval_real.py 가 사용
 ```
 
 ## 다른 PC에서 세팅
@@ -121,7 +123,7 @@ python predict.py --show-conf a.png b.png c.png
 from PIL import Image
 from predict import load_model, predict_image
 
-model = load_model("checkpoints/best.pt")
+model = load_model()          # 기본: finetuned.pt 있으면 그것, 없으면 best.pt
 text, conf, per_char = predict_image(model, Image.open("captcha.png"))
 print(text, conf)
 ```
@@ -177,18 +179,25 @@ text, conf, _ = predict_bytes(model, png_bytes)
 ## 5. 경량 배포 (ONNX)
 
 ```bash
-python export_onnx.py --ckpt checkpoints/best.pt --out captcha.onnx
+python export_onnx.py --ckpt checkpoints/finetuned.pt --out captcha.onnx
 python onnx_infer.py some_captcha.png --model captcha.onnx
 ```
 
-fp32 그대로도 CPU 약 2 ms/이미지, 파일 2.3 MB 라 충분히 가볍다.
-(참고: 이 크기의 conv 모델은 int8 동적 양자화 시 파일은 4배 작아지지만 onnxruntime CPU
-추론이 오히려 느려진다 — 굳이 하지 않는 편이 낫다.)
+- dynamo exporter 사용(새 헤드 지원), 가중치까지 **단일 파일**로 저장. 약 2.6 MB.
+- fp32 그대로 CPU 약 2 ms/이미지. int8 동적 양자화는 이 크기 모델에선 오히려 느려져 안 쓴다.
 
-## 정확도를 더 끌어올리려면
+## 실제 캡차에 맞추는 절차 (이번에 효과 본 순서)
 
-1. **실제 캡차 스타일에 생성기를 맞춘다** — 가장 효과 큼. 배경 팔레트, 폰트, 회전 폭,
-   간섭선/점 밀도를 `samples.png` 가 실물과 구분 안 될 때까지 튜닝.
-2. **실제 샘플 수백 장 라벨링** 후, 낮은 lr 로 fine-tune + 그걸 검증셋으로 사용.
-3. 글자가 항상 특정 폰트면 폰트 목록을 그 하나로 고정.
-4. 여전히 부족하면 `widths=(48,96,128,192)` 로 키우거나 CRNN+CTC 로 확장.
+1. **실제 캡차를 `Screenshot/` 에 모은다** — 파일명 = 정답 6글자 (예: `ABCDEF.png`).
+   `auto_fill.py --save-shots` 로 뽑은 뒤 사람이 라벨링. 100장 정도부터 유의미.
+2. **`synth.py` 를 실물에 맞춘다** — `samples.png` 와 실물을 나란히 보며 배경색·폰트·
+   글자 크기/간격·간섭선 위치·점 색을 조정. (이번엔 "선이 글자 관통", "점=글자색",
+   "글자 작고 넓은 간격", "위치 변동" 이 핵심이었다.)
+3. **합성으로 사전학습**: `python train.py --steps 3000 --real-dir Screenshot`
+   → 매 검증 시 실제 정확도도 찍힘. `best.pt` 저장.
+4. **실제로 파인튜닝**: `python finetune.py --steps 1000 --real-ratio 0.4`
+   → 실제 일부는 홀드아웃(검증 전용). `finetuned.pt` 저장.
+5. **측정**: `python eval_real.py --ckpt checkpoints/finetuned.pt --show`
+
+여전히 부족하면: 폰트가 1종이면 `synth.py` 폰트 목록을 그거 하나로 고정 / `widths` 를
+키우기 / 실제 샘플 더 모으기.

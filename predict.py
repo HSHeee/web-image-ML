@@ -23,8 +23,11 @@ import config
 from model import LightCaptchaNet
 from preprocess import to_tensor
 
-# 실행 위치(CWD)와 무관하게 스크립트 폴더 기준으로 기본 체크포인트를 찾는다
-DEFAULT_CKPT = str(Path(__file__).resolve().parent / "checkpoints" / "best.pt")
+# 실행 위치(CWD)와 무관하게 스크립트 폴더 기준으로 기본 체크포인트를 찾는다.
+# 파인튜닝된 게 있으면 그걸 우선 사용.
+_CKPT_DIR = Path(__file__).resolve().parent / "checkpoints"
+DEFAULT_CKPT = str(_CKPT_DIR / "finetuned.pt" if (_CKPT_DIR / "finetuned.pt").is_file()
+                   else _CKPT_DIR / "best.pt")
 
 
 def load_model(ckpt_path=DEFAULT_CKPT, device="cpu"):
