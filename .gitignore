@@ -25,3 +25,6 @@ checkpoints/last.pt
 .chrome-profile/
 .whale-profile/
 check.png
+
+# 실제 캡차 원본 이미지 (로컬 전용, 저장소엔 올리지 않음)
+Screenshot/
